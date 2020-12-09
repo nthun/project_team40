@@ -409,7 +409,7 @@ marp <-
 h1 <- 
   lmer(wb_overall_mean ~ religiosity + 
          # personal level confounders
-                         age + gender + ses + education + denomination +
+                         age + gender + ses + education + denom_lump +
          # country and sample level confounders
                          gdp_scaled + sample_type +
          # random intercept and slope model
@@ -426,15 +426,17 @@ summary(h1)
 h2 <- 
   lmer(wb_overall_mean ~ religiosity * cnorm_mean + 
          # personal level confounders
-                         age + gender + ses + education + denomination +
+                         age + gender + ses + education + denom_lump +
          # country level confounders
                          gdp_scaled + sample_type + 
          # random intercept and slope model
-                         (religiosity*cnorm_mean|country) ,data = marp)
+                         (religiosity|country) ,data = marp)
 
 summary(h2)
 ```
 
+Look for religiosity within denomination
+Denomination change
 
 # References
 
