@@ -1,7 +1,7 @@
 ---
 title: "MARP exploration - Team 40b"
 author: "Tamas Nagy"
-date: "12/2/2020"
+date: "`r Sys.Date()`"
 output: 
   html_document:
    theme: spacelab
@@ -22,6 +22,8 @@ library(skimr)
 library(report)
 library(rmarkdown)
 library(ggridges)
+library(tidytext)
+library(lme4)
 
 theme_set(theme_light())
 
@@ -29,7 +31,19 @@ theme_set(theme_light())
 
 # Main questions
 
-## Analysis issues
+1) Do religious people report higher well-being? 
+2) Does the relation between religiosity and well-being depend on how important people consider religion to be in their country (i.e., perceived cultural norms of religion)?
+
+# Blinded data
+
+The point of blinded data is to let analysts explore the data without the danger of p-hacking. Therefore, only the relationship of the outcomes and predctor variables are destroyed by shuffling, and the remainder is kept intact. 
+This means that: 
+
+- Data reduction techinques (PCA, EFA) will yield valid results.
+- Outiers, missing data can be observed and treated.
+- Confounders can be explored, meaning that not only univariate distributions but correlations are also kept intact.
+
+## Analysis issues to resolve
 
 - Operationalization of variables
 - Outliers
@@ -55,79 +69,15 @@ marp_proc <-
 
 ```
 
-# Operationalization of variables
 
-*Religiosity* and *well-being* has multiple items that we can use. According to previous studies of similar topics, *norms about religion* should be aggregated to the country level.
-
-## Religiosity
-
-Although this is an elusive concept, and no one-size-fits-all metric is available, we can choose to use information from all variables using PCA.
+# Descriptives and potential moderators
 
 ```{r}
-# Number of components that 
 marp_proc %>% 
-        select(starts_with("rel_")) %>% 
-        fa.parallel()
-
-# Parallel analysis suggests to use a single component.
-rel_pca <-
-        marp_proc %>% 
-        select(starts_with("rel_")) %>% 
-        pca(nfactors = 1)
-
-marp_proc %>% 
-  select()
-
-
-```
-
-# Aggregate the norms about religiosity into one variable.
-
-We use the mean of the two variables, since it makes no sense to use a more complicated model (PCA or EFA).
-
-```{r}
-# Country norm of religiosity
-
-country_norms <-
-  marp_proc %>% 
-  mutate(cnorm_avg = (cnorm_1 + cnorm_2)/2) %>% 
-  group_by(country) %>% 
-  summarise(cnorm_mean = mean(cnorm_avg)) %>% 
-  ungroup()
-
-```
-
-Construct final dataset
-```{r}
-marp <-
-  marp_proc %>% 
-  # Add religiosity scores
-  bind_cols(religiosity = rel_pca$scores[,1]) %>%
-  # Add country level norms
-  left_join(country_norms, by = "country") %>% 
-  # Merge different branches of the same religion, lump levels<1%
-  mutate(denom_lump = case_when(str_detect(denomination, "Muslim") ~ "Muslim",
-                                str_detect(denomination, "Christian|Evangelical") ~ "Christian",
-                                str_detect(denomination, "Other") ~ "Other",
-                                TRUE ~ denomination
-                                ) %>% 
-                      fct_lump_prop(.01, other_level = "Other"))
-  
-```
-
-
-# Descriptives
-
-```{r, results = "asis"}
-report_participants(marp, sex = "gender")
-```
-
-```{r}
-marp %>% 
         select(country, 
                gender, ses, education, ethnicity, denomination,
                sample_type, compensation, 
-               religiosity, ends_with("_mean")) %>% 
+               ends_with("_mean")) %>% 
         skim()
 ```
 
@@ -136,7 +86,7 @@ marp %>%
 ### N of participants
 
 ```{r}
-marp_raw %>% 
+marp_proc %>% 
         mutate(country = fct_infreq(country) %>% fct_rev()) %>% 
         ggplot() +
         aes(y = country) +
@@ -149,8 +99,10 @@ marp_raw %>%
 
 ### Age
 
+Age has a few obvious outliers (e.g. age of 0 or 1), that we could remove, the sample size makes it unlikely that these outliers have a large influence on the model, therefore I won't remove them.
+
 ```{r}
-marp_raw %>% 
+marp_proc %>% 
   mutate(country = fct_reorder(country, age, median)) %>%
   ggplot() +
   aes(y = country, x = age, fill = country) +
@@ -158,12 +110,20 @@ marp_raw %>%
   geom_boxplot(outlier.alpha = .2, show.legend = FALSE) +
   labs(title = "Age by country",
        y = NULL)
+
+
+# Number of participants below 18
+marp_proc %>% 
+  filter(age < 18) %>% 
+  nrow()
+
 ```
+
 
 ### Gender
 
 ```{r}
-marp %>% 
+marp_proc %>% 
         group_by(country) %>% 
         summarise(pct_female = mean(gender == "Female", 
                                     na.rm = TRUE)) %>% 
@@ -182,7 +142,7 @@ marp %>%
 Education is a common confounder when the relationship between religiosity and well-being is considered. There is a considerable spread of education within and between countries.
 
 ```{r}
-marp_raw %>% 
+marp_proc %>% 
   mutate(country = fct_reorder(country, education, median)) %>%
   ggplot() +
   aes(y = country, x = education, fill = country) +
@@ -196,7 +156,7 @@ marp_raw %>%
 Socio-economic status is a common confounder when the relationship between religiosity and well-being is considered. There is a considerable spread of SES within and between countries.
 
 ```{r}
-marp_raw %>% 
+marp_proc %>% 
   mutate(country = fct_reorder(country, ses, median)) %>%
   ggplot() +
   aes(y = country, x = ses, fill = country) +
@@ -207,41 +167,63 @@ marp_raw %>%
 
 ### Denomination
 
+Religious denomination is often used when the connection between religiosity and well being is considered. 
+
 ```{r}
-marp %>% 
+marp_proc %>% 
+  mutate(country = fct_infreq(country) %>% fct_rev()) %>%
+  count(country, denomination) %>%
+  ggplot() +
+  aes(y = country, x = n, fill = denomination) +
+  geom_col(position = "stack") +
+  labs(title = "Proportion of denominations by country",
+       x = NULL, y = NULL,
+       fill = "Denomination")
+```
+
+However, in its current form, the variable contains categories that are ratther sparse, and this may interfere with the statistical model that we want to use. Therefore we choose to lump together levels that constitute less than 1% of the categories into "Other".
+
+```{r}
+marp_proc %>% 
+   mutate(denom_lump = case_when(str_detect(denomination, "Muslim") ~ "Muslim",
+                                str_detect(denomination, "Christian|Evangelical") ~ "Christian",
+                                str_detect(denomination, "Other") ~ "Other",
+                                TRUE ~ denomination
+                                ) %>% 
+                      fct_lump_prop(.01, other_level = "Other")) %>% 
   mutate(country = fct_infreq(country) %>% fct_rev()) %>%
   count(country, denom_lump) %>%
   ggplot() +
   aes(y = country, x = n, fill = denom_lump, label = denom_lump) +
   geom_col(position = "stack") +
-  # geom_text(check_overlap = TRUE)
-  scale_x_continuous(labels = scales::percent_format()) +
   labs(title = "Proportion of denominations by country",
        subtitle = "Denominations that were infrequent (<1%) were lumped together",
-       x = NULL, y = NULL)
+       x = NULL, y = NULL,
+       fill = "Denomination")
 
 
 ```
 
 
 ### Ethnicity
+
+Well-being might be influenced by ethicity, but not directly. For e.g. minority status might be associated with WB, but there were no questions about this. Therefore, in my opinion, raw ethnicity sould not be added to the model.
+
 ```{r}
-marp %>% 
+marp_proc %>% 
   count(ethnicity)
 ```
 
 
 ### Importance of religion
 ```{r}
-library(tidytext)
-
 cnorm_questions <- 
   tibble(name = c("cnorm_1", "cnorm_2"),
          question = c("Importance of religious lifestyle for average person in country",
                       "Importance of belief in God/Gods for average person in country"
                     ))
 
-marp %>% 
+marp_proc %>% 
   select(subject, country, cnorm_1, cnorm_2) %>% 
   pivot_longer(c("cnorm_1", "cnorm_2")) %>% 
   group_by(country, name) %>% 
@@ -258,15 +240,10 @@ marp %>%
   
 ```
 
-```{r}
-marp
-
-```
-
 
 ### GDP per capita
 ```{r}
-marp %>% 
+marp_proc %>% 
   group_by(country) %>% 
   summarise(gdp = mean(gdp)) %>% 
   ungroup() %>% 
@@ -281,23 +258,184 @@ marp %>%
 
 ```
 
-# Religiosity and well-being
+### Sample type
+
 
 ```{r}
-library(lmerTest)
-marp %>% glimpse()
+marp_proc %>% 
+  mutate(country = fct_infreq(country) %>% fct_rev()) %>%
+  count(country, sample_type) %>% 
+  ggplot() +
+  aes(y = country, x = n, fill = sample_type) +
+  geom_col(position = "stack") +
+  labs(title = "Proportion of sample type by country",
+       x = NULL, y = NULL, fill = "Sample type")
+```
 
-mod <- 
-  lmer(wb_overall_mean ~ religiosity + 
-                         age + gender + ses + education +
-                         gdp_scaled + sample_type + 
-                         (religiosity|country) ,data = marp)
 
-summary(mod)
+
+### Compensation
+
+Compensation is 100% associated with the sample type, therefore I'm not going to use it in the model.
+
+```{r}
+marp_proc %>% 
+  mutate(country = fct_infreq(country) %>% fct_rev()) %>%
+  count(country, compensation) %>% 
+  ggplot() +
+  aes(y = country, x = n, fill = compensation) +
+  geom_col(position = "stack") +
+  labs(title = "Proportion of compensation by country",
+       x = NULL, y = NULL, fill = "Compensation")
+```
+
+# Operationalization of variables {.tabset}
+
+*Religiosity* and *well-being* has multiple items that we can use. According to previous studies of similar topics, *norms about religion* should be aggregated to the country level.
+
+## Religiosity
+
+Although religiosity is an elusive concept, and no one-size-fits-all metric is available. I don't feel competent to choose just one question, so I try to use as much information from all available questions as possible. I'm also not feeling confident to relevel specific questions (e.g. rel_3). Therefore, I choose to use PCA to extract an aggregated variable.
+
+```{r}
+# Number of components that 
+marp_proc %>% 
+        select(starts_with("rel_")) %>% 
+        fa.parallel()
+
+# Parallel analysis suggests to use a single component.
+rel_pca <-
+        marp_proc %>% 
+        select(starts_with("rel_")) %>% 
+        pca(nfactors = 1)
+
+marp_proc %>% 
+  select(starts_with("rel")) %>% 
+  mutate(rel_pca = rel_pca$scores[,1]) %>% 
+  cor.plot()
+
+```
+
+The religiosity values seems to vary considerably by country.
+
+```{r}
+marp_proc %>%
+  mutate(rel_pca = rel_pca$scores[,1]) %>% 
+  mutate(country = fct_reorder(country, rel_pca, median)) %>%
+  ggplot() +
+  aes(y = country, x = rel_pca, fill = country) +
+  geom_boxplot(outlier.alpha = .2, show.legend = FALSE) +
+  labs(title = "Religiosity by country",
+       subtitle = "Aggregated religiosity component",
+       x = NULL,
+       y = NULL)
+```
+
+I compared the PCA operationalization with the self-admitted single item repigiosity. The difference on the country level seems quite subtle.
+
+```{r}
+marp_proc %>% 
+  mutate(rel_pca = rel_pca$scores[,1]) %>% 
+  group_by(country) %>% 
+  summarise(rel_item = mean(rel_3 == 1),
+                  rel_pca = mean(rel_pca),
+                  n = n()) %>% 
+  mutate(across(starts_with("rel_"), ~scale(.x) %>% as.numeric())) %>% 
+  pivot_longer(cols = c("rel_item", "rel_pca")) %>% 
+  mutate(country = fct_reorder(country, value)) %>% 
+  ggplot() +
+  aes(x = value, y = country, color = name) +
+  geom_point(size = 2) +
+  labs(title = "Different operationalizations of religiosity lead to similar country-wise values (r = .91)",
+       subtitle = "One item religiosity (rel_3) vs. 9-item PCA religiosity component (rel_pca) values",
+       y = NULL, x = NULL, color = "Operationalization")
+```
+
+
+
+## Well-being
+
+The well-being questions have calculated values for subscales and overall 
+
+```{r}
+marp_proc %>% 
+  select(starts_with("wb")) %>% 
+  cor.plot()
+```
+
+
+## Norms about religiosity into one variable.
+
+Accordint to previous research, norms should be handled on the country level. 
+We use the mean of the two variables that are otherwise strongly correlated, since it makes no sense to use a more complicated method (PCA or EFA). Then we calculate the country level mean from this variable.
+
+```{r}
+# Country norm of religiosity
+country_norms <-
+  marp_proc %>% 
+  mutate(cnorm_avg = (cnorm_1 + cnorm_2)/2) %>% 
+  group_by(country) %>% 
+  summarise(cnorm_mean = mean(cnorm_avg)) %>% 
+  ungroup()
 
 ```
 
 
-# Handle missing values
-# Handle outliers(age?)
+# Modeling the relationship between religiosity and well-being
 
+Construct final dataset
+```{r}
+marp <-
+  marp_proc %>% 
+  # Add religiosity scores from PCA
+  bind_cols(religiosity = rel_pca$scores[,1]) %>%
+  # Add country level norms
+  left_join(country_norms, by = "country") %>% 
+  # Merge different branches of the same religion, lump levels < 1%
+  mutate(denom_lump = case_when(str_detect(denomination, "Muslim") ~ "Muslim",
+                                str_detect(denomination, "Christian|Evangelical") ~ "Christian",
+                                str_detect(denomination, "Other") ~ "Other",
+                                TRUE ~ denomination
+                                ) %>% 
+                      fct_lump_prop(.01, other_level = "Other"))
+  
+```
+
+
+## 1) Do religious people report higher well-being? 
+
+```{r}
+
+h1 <- 
+  lmer(wb_overall_mean ~ religiosity + 
+         # personal level confounders
+                         age + gender + ses + education + denomination +
+         # country and sample level confounders
+                         gdp_scaled + sample_type +
+         # random intercept and slope model
+                         (religiosity|country) ,data = marp)
+
+summary(h1)
+
+```
+
+
+## 2) Does the relation between religiosity and well-being depend on how important people consider religion to be in their country (i.e., perceived cultural norms of religion)?
+
+```{r}
+h2 <- 
+  lmer(wb_overall_mean ~ religiosity * cnorm_mean + 
+         # personal level confounders
+                         age + gender + ses + education + denomination +
+         # country level confounders
+                         gdp_scaled + sample_type + 
+         # random intercept and slope model
+                         (religiosity*cnorm_mean|country) ,data = marp)
+
+summary(h2)
+```
+
+
+# References
+
+TBA
