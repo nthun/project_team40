@@ -1,0 +1,81 @@
+---
+title: "MARP Stage 1 Analysis Strategy"
+author: "Don van Ravenzwaaij"
+date: "December 2, 2020"
+output:
+  pdf_document: default
+  html_document: default
+---
+
+MARP Stage 1 Analysis Strategy
+==============================================================
+
+# 0. Reading in the data
+
+First, let's read in the data:
+
+```{r message=FALSE}
+library("BayesFactor")
+```
+
+```{r}
+PreData = read.csv ("MARP_data_blinded.csv")
+```
+
+# 1. Outlier removal
+
+For our outlier removal, we keep everything extremely simple and remove just those that failed to pass the attention check:
+
+```{r}
+Data = PreData[PreData$attention_check==1,]
+```
+
+There are no clear indications that anything else merits removal.
+
+# 2. The IV and the DV
+
+We do not have any information on the psychometric properties of any of the included items in the data set. As such, we have no theoretical basis to decide which items are and are not relevant to the constructs religiosity and well-being. As such, we decided to operationalize these concepts as self-reported religiosity and self-reported well-being. Furthermore, we make no assumptions as to whether the included items are necessary and sufficient.
+
+The item that in our opinion reflects self-reported religiosity best is item rel_3: ``self-identification (1= religious, 2= not religious, 3=atheist)''. We note that in the data set, item codes 1, 0.5, and 0 are used, respectively. We are not interested in the distinction between not religious (coded 0.5) and atheist (coded 0), so we lump these together for further analysis.
+
+The item that in our opinion reflects self-reported well-being best is item wb_gen_1: ``quality of life general''. The item uses a 1-5 response scale, with 1 indicating low well-being and 5 indicating high well-being. With all of this defined, we can create our non-religious group (coded nRel) and our religious group (coded Rel):
+
+```{r}
+nRel = Data$wb_gen_1[Data$rel_3<1]
+Rel = Data$wb_gen_1[Data$rel_3==1]
+```
+
+# 3. Descriptives
+
+Here are some descriptives:
+
+```{r}
+SamnRel = length(nRel);     SamRel = length(Rel);
+MeannRel = mean(nRel);      MeanRel = mean(Rel);
+SDnRel = sd(nRel);          SDRel = sd(Rel);
+```
+
+```{r echo=FALSE}
+desc = matrix (
+  data = c(SamnRel, SamRel,
+           MeannRel, MeanRel,
+           SDnRel, SDRel),
+  nrow = 2,
+  ncol = 3, 
+  dimnames = list (c("Non-religious", "Religious"),
+                   c("n", "Mean", "SD"))
+)
+knitr::kable(desc)
+```
+
+# 4. Analysis
+
+Our analysis of choice is a one-sided Bayesian $t$-test (testing whether well-being is higher in the religious group compared to the non-religious group). Specifically, we calculate a Jeffreys-Zellner-Siow Bayes factor, which means we put a Cauchy prior of effect size $\delta$. The Cauchy prior is centered on zero which scale parameter $1/\sqrt2$.
+
+Conducting the analysis yields:
+
+```{r}
+BF10 = as.vector (ttestBF (x = nRel, y = Rel, nullInterval = c(-Inf, 0), rscale = 1/sqrt(2)))[1]
+```
+
+The Bayes factor indicates the data is `r BF10` times as likely under the alternative hypothesis (religious people report higher well-being) compared to the null hypothesis (religious people do not report higher well-being).
