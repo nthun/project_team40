@@ -12,11 +12,9 @@ editor_options:
   chunk_output_type: console
 ---
 
-```{r setup, include=FALSE}
-knitr::opts_chunk$set(echo = TRUE)
+```{r setup, echo = TRUE, message = FALSE, warning = FALSE}
 
 library(tidyverse)
-library(countrycode)
 library(psych)
 library(skimr)
 library(ggridges)
@@ -50,14 +48,16 @@ This means that:
 
 In order to best address the hypotheses, we need to decide a few things. 
 
-- Operationalization of variables: How should we 
-- Outliers (should we exclude them?)
-- Choose statistical model ()
-  - Confounders
-  - Moderators
+- Operationalization of variables: How should we conceptualize key variables?
+- Outliers how should we handle them?
+- Choose statistical model (multilevel?)
+  - Confounders (which ones to use?)
+  - Moderators 
   - Lumping levels for nominal variables
 
-# Read and process data
+# Read and pre-process data
+
+At this point, we only exclude participants who did not pass the attention check. 
 
 ```{r}
 # Read raw data
@@ -70,8 +70,7 @@ marp_proc <-
   mutate( gender = recode(gender, 
                           "man" = "Male", 
                           "woman" = "Female",
-                          "other" = "Other"),
-          counry3 = countryname(country, destination = "iso3c"))
+                          "other" = "Other"))
 
 ```
 
@@ -115,15 +114,9 @@ marp_proc %>%
     geom_boxplot(alpha = .5,
                width = .2,
                outlier.alpha = .2, show.legend = FALSE) +
-  geom_density_ridges(alpha = .5) +
+  geom_density_ridges(alpha = .5, show.legend = FALSE) +
   labs(title = "Age by country",
        y = NULL)
-
-
-# Number of participants below 18
-marp_proc %>% 
-  filter(age < 18) %>% 
-  nrow()
 
 ```
 
@@ -200,9 +193,7 @@ lumped_denom <-
                                    str_detect(denomination, "Other") ~ "Other",
                                    is.na(denomination) ~ "No denomination",
                                    TRUE ~ denomination) %>% 
-                          fct_lump_prop(.01, 
-                                        other_level = "Other") %>% 
-                          fct_relevel("No denomination"))
+                          fct_lump_prop(.01, other_level = "Other"))
 
 marp_proc %>% 
   left_join(lumped_denom, by = "subject") %>% 
@@ -294,9 +285,6 @@ marp_proc %>%
 Compensation is 100% associated with the sample type, therefore I'm not going to use it in the model.
 
 ```{r}
-
-table(marp_proc$sample_type, marp_proc$compensation, marp_proc$country)
-
 marp_proc %>% 
   mutate(country = fct_infreq(country) %>% fct_rev()) %>%
   count(country, compensation) %>% 
@@ -420,9 +408,9 @@ marp_proc %>%
 
 
 
-## Norms about religiosity into one variable.
+## Cultural norms about religiosity into one variable.
 
-Accordint to previous research, norms should be handled on the country level. 
+According to previous research, norms should be handled on the country level. 
 We use the mean of the two variables that are otherwise strongly correlated, since it makes no sense to use a more complicated method (PCA or EFA). Then we calculate the country level mean from this variable.
 
 ```{r}
@@ -436,10 +424,12 @@ country_norms <-
 
 ```
 
+# Construct final dataset
 
-# Modeling the relationship between religiosity and well-being
+Using all information from the exploratory analysis, we create the final dataset.
+We add the religiosity component, the country-wise norms, the lumped denomination data, and set baselines for categorical variables.
+We also drop participants with missing values in varibles that we want to use in the statistical models, as those can cause difficulties when comparing models. This means dropping 25 participants.
 
-## Construct final dataset
 ```{r}
 marp <-
   marp_proc %>% 
@@ -448,60 +438,146 @@ marp <-
   # Add country level norms
   left_join(country_norms, by = "country") %>% 
   # Merge different branches of the same religion, lump levels < 1%
-  left_join(lumped_denom, by = "subject") 
-  
+  left_join(lumped_denom, by = "subject") %>% 
+  # Set baselines
+  mutate(sample_type = fct_relevel(sample_type, "online panel"),
+         denom_lump = fct_relevel(denom_lump, "No denomination"),
+         gender = fct_relevel(gender, "Female")) %>% 
+  # Drop participants with missing variables
+  drop_na(age,  gender, ses, education, denom_lump, sample_type)
+
+
 ```
+
+# Modeling the relationship between religiosity and well-being
+
 
 
 ## 1) Do religious people report higher well-being? 
 
 ```{r}
-
 h1 <- 
-  marp %>% 
-  filter(country != "Japan") %>% 
+  # filter(country != "Japan") %>% 
   lmer(wb_overall_mean ~ religiosity + 
          # personal level confounders
                          age + gender + ses + education + denom_lump +
          # country and sample level confounders
                          gdp_scaled + sample_type +
          # random intercept and slope model
-                         (religiosity|country), data = .)
+                         (religiosity|country), data = marp)
 
-tab_model(h1)
+# Create a null model for comparisons that does not contain the main predictor
+
+h0 <- update(h1, . ~ . -religiosity)
 
 ```
 
-Model diagnostics
+
+### Model diagnostics and assumption check 
 ```{r}
 check_model(h1)
 ```
 
-It seems like there is a strange 
+Model diagnostics show:
+
+- `r emo::ji("check")` No multicollinearity, 
+- `r emo::ji("check")` Normally distributed residuals
+- `r emo::ji("check")` No influential cases
+- `r emo::ji("check")` Normally distributed random effects
+- `r emo::ji("x")` Homoskedasticity
+
+We can handle heteroscedasticity by using cluster robust standard errors (CR2), using the `clubSandwich` package.
+https://strengejacke.github.io/sjPlot/articles/tab_model_robust.html
+
+```{r cache = TRUE}
+tab_model(h1,
+          vcov.fun = "CR", 
+          vcov.type = "CR2", 
+          vcov.args = list(cluster = h1@frame$country))
+```
+
+Apart from heteroscedasticity, it seems like there is a strange separation in the predictor levels. After some investigation, it seems like all residuals on the left hand side come from the Japanese sample. 
+  We need to decide where this comes from, and come up with a plan to handle it. 
 
 
 ## 2) Does the relation between religiosity and well-being depend on how important people consider religion to be in their country (i.e., perceived cultural norms of religion)?
 
 ```{r}
 h2 <- 
-  lmer(wb_overall_mean ~ religiosity * cnorm_mean + 
+  lmer(wb_overall_mean ~ scale(religiosity) * scale(cnorm_mean) + 
          # personal level confounders
                          age + gender + ses + education + denom_lump +
          # country level confounders
                          gdp_scaled + sample_type + 
          # random intercept and slope model
-                         (religiosity|country) ,data = drop_na(marp, age))
+                         (religiosity|country), data = marp)
 
 summary(h2)
 ```
 
-Denomination change
+### Model diagnostics and assumption checks
+```{r}
+check_model(h2)
+```
+
+Model diagnostics show heteroscedasticity, therefore cluster robust standard errors are calculated.
+
+```{r cache = TRUE}
+tab_model(h2,
+          vcov.fun = "CR", 
+          vcov.type = "CR2", 
+          vcov.args = list(cluster = h1@frame$country))
+```
+
+## Model comparisons
+
+```{r}
+
+anova(h0, h1)
+anova(h1, h2)
+anova(h0, h2)
+
+# Calculate BIC based Bayes factor for 
+# H0 vs H1
+exp((BIC(h0) - BIC(h1))/2)
+# H1 vs H2
+exp((BIC(h1) - BIC(h2))/2)
+# H0 vs H2
+exp((BIC(h0) - BIC(h2))/2)
+
+```
+
+
 
 # Using Bayesian models
 
 **Work in progress**
 
-```{r eval=FALSE, cache=FALSE}
+```{r eval=FALSE, cache=FALSE, include = FALSE}
+# Create a null model
+b0 <- 
+  brm(wb_overall_mean ~ 1 + 
+         # personal level confounders
+                         age + gender + ses + education + denom_lump +
+         # country level confounders
+                         gdp_scaled + sample_type + 
+         # random intercept and slope model
+                         (religiosity | country),
+         # set parameters for sampling
+      iter = 2000, 
+      warmup = 500, 
+      thin = 2, 
+      chains = 3, 
+      cores = 12, 
+      seed = 123,
+      data = drop_na(marp, age))
+
+summary(b1)
+
+
+```
+
+```{r eval=FALSE, cache=FALSE, include = FALSE}
 
 b1 <- 
   brm(wb_overall_mean ~ religiosity  + 
@@ -527,7 +603,7 @@ summary(b1)
 ```
 
 
-```{r eval=FALSE, cache=FALSE}
+```{r eval=FALSE, cache=FALSE, include = FALSE}
 b2 <- 
   brm(wb_overall_mean ~ religiosity * cnorm_mean + 
       # personal level confounders
@@ -547,6 +623,7 @@ b2 <-
 
 summary(b2)
 ```
+
 
 # References
 
