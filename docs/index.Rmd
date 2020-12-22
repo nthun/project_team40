@@ -1,6 +1,7 @@
 ---
 title: "MARP exploration - Team 40b"
 date: "`r Sys.Date()`"
+author: "Tamas Nagy"
 output: 
   html_document:
    theme: spacelab
@@ -11,6 +12,12 @@ editor_options:
   chunk_output_type: console
 ---
 
+```{r, echo = TRUE, eval = FALSE}
+install.packages(c("tidyverse", "psych", "skimr", "ggridges", "tidytext", "lme4", "performance", "sjPlot", "here", "emo", "broom.mixed"))
+```
+
+
+
 ```{r setup, echo = TRUE, message = FALSE, warning = FALSE}
 
 library(tidyverse)
@@ -19,9 +26,9 @@ library(skimr)
 library(ggridges)
 library(tidytext)
 library(lme4)
-library(brms)
 library(performance)
 library(sjPlot)
+library(broom.mixed)
 
 theme_set(theme_light())
 
@@ -42,6 +49,7 @@ This means that:
 - Data reduction techinques (PCA, EFA) will yield valid results.
 - Outiers, missing data can be observed and treated.
 - Confounders can be explored, meaning that not only univariate distributions but correlations are also kept intact.
+- Country level means should remain intact
 
 ## Analysis issues to resolve
 
@@ -399,10 +407,6 @@ marp_proc %>%
   select(starts_with("wb")) %>% 
   cor.plot()
 
-# GGPLOT vatiant?
-marp_proc %>% 
-    select(starts_with("wb"))
-
 ```
 
 
@@ -417,12 +421,6 @@ marp_proc %>%
   geom_density_ridges(alpha = .5, show.legend = FALSE) +
   labs(title = "Overall well-being by country",
        y = NULL)
-
-marp_proc %>% 
-  group_by(country) %>% 
-  summarise(avg_wb = mean(wb_overall_mean)) %>% 
-  arrange(-avg_wb) %>% 
-  print(n = 100)
 
 ```
 
@@ -509,7 +507,7 @@ Apart from heteroscedasticity, it seems like there is a strange separation in th
 Taken together, we decided to remove the Japanese data.
 
 ```{r}
-broom.mixed::augment(model_diag) %>% 
+augment(model_diag) %>% 
   mutate(country = fct_reorder(country, .fitted)) %>% 
   ggplot() +
   aes(x = .fitted, y = country, fill = country) +
@@ -590,7 +588,7 @@ tab_model(h2,
           vcov.args = list(cluster = h1@frame$country))
 ```
 
-## Model comparisons
+## Model comparisons and Bayes Factors
 
 ```{r}
 
