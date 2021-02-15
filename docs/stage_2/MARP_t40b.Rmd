@@ -12,14 +12,14 @@ editor_options:
   chunk_output_type: console
 ---
 
-```{r, echo = TRUE, eval = FALSE}
+```{r, packages, echo = TRUE, eval = FALSE}
+# Packeges needed
 install.packages(c("tidyverse", "psych", "skimr", "ggridges", "tidytext", "lme4", "performance", "sjPlot", "here", "emo", "broom.mixed"))
 ```
 
 
 
 ```{r setup, echo = TRUE, message = FALSE, warning = FALSE}
-
 library(tidyverse)
 library(psych)
 library(skimr)
@@ -69,7 +69,6 @@ At this point, we only exclude participants who did not pass the attention check
 ```{r}
 # Read raw data
 marp_raw <- 
-  # read_csv(here::here("data/MARP_data_blinded.csv"))
   read_csv(here::here("data/MARP_data.csv"))
 
 marp_proc <-
@@ -538,7 +537,7 @@ h1 <-
          # personal level confounders
          scale(age) + gender + scale(ses) + scale(education) + denom_lump +
          # country and sample level confounders
-         gdp_scaled + sample_type +
+         scale(gdp_scaled) + sample_type +
          # random intercept and slope model
          (scale(religiosity)|country), 
        data = marp)
@@ -547,7 +546,7 @@ h1 <-
 h0 <- update(h1, . ~ . -scale(religiosity))
 
 check_model(h1)
-summary(h1)
+# summary(h1)
 ```
 
 We can handle heteroscedasticity by using cluster robust standard errors (CR2), using the `clubSandwich` package.
@@ -557,11 +556,52 @@ https://strengejacke.github.io/sjPlot/articles/tab_model_robust.html
 tab_model(h1, 
           show.aic = TRUE, 
           show.reflvl = TRUE, 
-          string.ci = "95% CI", 
-          vcov.fun = "CR", 
-          vcov.type = "CR2", 
-          vcov.args = list(cluster = h1@frame$country))
+          string.ci = "95% CI",
+        # file = "docs/h1_model.html",
+          vcov.fun = "CR",
+          vcov.type = "CR2",
+          vcov.args = list(cluster = h1@frame$country)
+          )
 ```
+
+### Plots 
+```{r}
+# Prepare predictions for plotting
+h1_lines <- 
+  coef(h1)$country %>% 
+  rownames_to_column("country") %>% 
+  as_tibble() %>% 
+  transmute(country, 
+            intercept = `(Intercept)`, 
+            slope = `scale(religiosity)`,
+            fix_int = fixef(h1)["(Intercept)"],
+            fix_slo = fixef(h1)["scale(religiosity)"],
+            x = -1,
+            xend = 1,
+            yend = intercept + slope,
+            y = intercept - slope)
+```
+
+#### Predictions for religiosity by country
+```{r}
+h1_lines %>% 
+  ggplot() +
+  aes(x = x, xend = xend, y = y, yend = yend, color = country) +
+  geom_segment(show.legend = FALSE, size = 1.2, alpha = .7) +
+    geom_abline(aes(intercept = fix_int, 
+                    slope = fix_slo), 
+                color = "black", size = 5, alpha = .3) +
+    geom_text(aes(label = country), 
+              show.legend = FALSE, hjust = 1, check_overlap = TRUE) +
+    geom_text(aes(x = xend, y = yend, label = country), 
+              show.legend = FALSE, hjust = 0, check_overlap = TRUE) +
+    xlim(-1.25,1.25) +
+    labs(title = "Predicted level of well being based on religiosity",
+         subtitle = "Separate lines show the random intercept and slope for each country. Grey line shows the fixed effect",
+         y = "General well being (standardized)",
+         x = "Religiosity (standardized)")
+```
+
 
 ## 2) Does the relation between religiosity and well-being depend on how important people consider religion to be in their country (i.e., perceived cultural norms of religion)?
 
@@ -571,14 +611,14 @@ h2 <-
          # personal level confounders
                          scale(age) + gender + scale(ses) + scale(education) + denom_lump +
          # country level confounders
-                         gdp_scaled + sample_type + 
+                         scale(gdp_scaled) + sample_type + 
          # random intercept and slope model
                          (scale(religiosity)|country), 
        data = marp)
 
 check_model(h2)
 
-summary(h2)
+# summary(h2)
 ```
 
 Model diagnostics show heteroscedasticity, therefore cluster robust standard errors are calculated.
@@ -588,13 +628,86 @@ tab_model(h2,
           show.aic = TRUE, 
           show.reflvl = TRUE, 
           string.ci = "95% CI", 
-          vcov.fun = "CR", 
-          vcov.type = "CR2", 
-          vcov.args = list(cluster = h1@frame$country))
+          # file = "docs/h2_model.html",
+          vcov.fun = "CR",
+          vcov.type = "CR2",
+          vcov.args = list(cluster = h1@frame$country)
+          ) 
+  
 ```
 
-## Model comparisons and Bayes Factors
+The relationship between religiosity and well-being is moderated by country norms about religion. In countries where religion is more important , religion has a stronger association with well-being.
 
+### Plots {.tabset}
+#### Show random intercept and slope by country norms
+```{r}
+h1_lines %>% 
+        left_join(country_norms, by = "country") %>% 
+        ggplot() +
+        aes(x = x, xend = xend, y = y, yend = yend, color = cnorm_mean) +
+        geom_segment(size = 1.2, alpha = .7) +
+        geom_abline(aes(intercept = fix_int, 
+                        slope = fix_slo), 
+                    color = "black", size = 5, alpha = .3) +
+        scale_color_viridis_c(option = "inferno") +
+        geom_text(aes(label = country), 
+                  show.legend = FALSE, hjust = 1, check_overlap = TRUE) +
+        geom_text(aes(x = xend, y = yend, label = country), 
+                  show.legend = FALSE, hjust = 0, check_overlap = TRUE) +
+        xlim(-1.25,1.25) +
+        labs(title = "Predicted level of well being based on religiosity",
+             subtitle = "Separate lines show the random intercept and slope for each country. Grey line shows the fixed effect",
+             y = "General well being (standardized)",
+             x = "Religiosity (standardized)",
+             color = "Importance of\nreligion in\nthe country")
+```
+
+#### On different facets
+```{r}
+h1_lines %>% 
+        left_join(country_norms, by = "country") %>% 
+        mutate(country = fct_reorder(country, cnorm_mean)) %>% 
+        ggplot() +
+        aes(x = x, xend = xend, y = y, yend = yend, color = cnorm_mean) +
+        geom_segment(size = 1.2, alpha = .7) +
+        geom_abline(aes(intercept = fix_int, 
+                        slope = fix_slo), 
+                    color = "black", size = 2, alpha = .3) +
+        facet_wrap(~country) +
+        scale_color_viridis_c(option = "inferno") +
+        geom_text(aes(label = country), 
+                  show.legend = FALSE, hjust = 1, check_overlap = TRUE) +
+        geom_text(aes(x = xend, y = yend, label = country), 
+                  show.legend = FALSE, hjust = 0, check_overlap = TRUE) +
+        xlim(-2,2) +
+        labs(title = "Predicted level of well being based on religiosity",
+             subtitle = "Separate lines show the random intercept and slope for each country. Grey line shows the fixed effect\nCountries are in increasing order of importance of religion.",
+             y = "General well being (standardized)",
+             x = "Religiosity (standardized)",
+             color = "Importance of\nreligion in\nthe country")
+```
+
+#### Show only the slopes
+```{r}
+h1_lines %>% 
+        left_join(country_norms, by = "country") %>% 
+        ggplot() +
+        aes(x = x, xend = xend, y = y, yend = yend-y, color = cnorm_mean) +
+        geom_segment(x = 0, y = 0, size = 1.2, alpha = .7) +
+        scale_color_viridis_c(option = "inferno") +
+        geom_text(aes(x = xend, y = yend-y, label = country), 
+                  show.legend = FALSE, hjust = 0, check_overlap = TRUE) +
+        xlim(0, 1.25) +
+        ylim(0, .45) +
+        labs(title = "Predicted level of well being based on religiosity",
+             subtitle = "Separate lines show the slope for each country.",
+             y = "General well being (standardized)",
+             x = "Religiosity (standardized)",
+             color = "Importance of\nreligion in\nthe country")
+```
+
+
+## Model comparisons and Bayes Factors
 ```{r}
 
 anova(h0, h1)
@@ -609,7 +722,29 @@ exp((BIC(h1) - BIC(h2))/2)
 # H0 vs H2
 exp((BIC(h0) - BIC(h2))/2)
 
+# Get std. beta and conf ints for both models
+h1_coef <- 
+  tidy(h1, conf.int = TRUE) %>% 
+  filter(term == "scale(religiosity)") %>% 
+  select(estimate, conf.low, conf.high) %>% 
+  mutate(across(everything(), round, 2)) %>% 
+  summarise(str_glue("std. beta = {.$estimate} 95% CI[{.$conf.low}, {.$conf.high}]")) %>% 
+  pull()
+
+h2_coef <- 
+  tidy(h2, conf.int = TRUE) %>% 
+  filter(term == "scale(religiosity):scale(cnorm_mean)") %>% 
+  select(estimate, conf.low, conf.high) %>% 
+  mutate(across(everything(), round, 2)) %>% 
+  summarise(str_glue("std. beta = {.$estimate} 95% CI[{.$conf.low}, {.$conf.high}]")) %>% 
+  pull()
+
 ```
 
+# Conclusion
 
+The BF for the first research question indicates that the data are `r round(exp((BIC(h0) - BIC(h1))/2), 2)` more likely under the alternative hypothesis than the null. Therefore, religiosity seems to have an effect of `r h1_coef` on general well being while controlling for gender, age, denomination, ses, education, sample type, and country gdp.
 
+The BF for the second research question indicates that the data are `r round(exp((BIC(h0) - BIC(h2))/2), 2)` more likely under the alternative hypothesis than the null. Therefore, country norms about religiosity seem to moderate (`r h2_coef`) the effect of religiosity on general well being while controlling for gender, age, denomination, ses, education, sample type, and country gdp.
+
+Based on the collected evidence, the answer to both research questions is 'yes'.

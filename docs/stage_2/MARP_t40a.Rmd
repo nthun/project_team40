@@ -1,0 +1,202 @@
+---
+title: "MARP Stage 1 Analysis Strategy"
+author: "Don van Ravenzwaaij"
+date: "February 10, 2021"
+output:
+  pdf_document: default
+  html_document: default
+---
+
+MARP Stage 2 Analysis on Real Data
+==============================================================
+
+The research questions are:
+
+1) Do religious people report higher well-being?
+2) Does the relation between religiosity and well-being depend on how important people consider religion to be in their country (i.e., perceived cultural norms of religion)?
+
+# 0. Reading in the data
+
+First, let's read in the data:
+
+```{r message=FALSE}
+library ("BayesFactor")
+```
+
+```{r echo=FALSE}
+setwd ("/Users/donvanravenzwaaij/Dropbox/Research/UHD2 RUG/MARP")
+```
+
+```{r}
+PreData = read.csv ("MARP_data.csv")
+```
+
+# 1. Outlier removal
+
+For our outlier removal, we keep everything extremely simple and remove just those that failed to pass the attention check:
+
+```{r}
+Data = PreData[PreData$attention_check==1,]
+```
+
+There are no clear indications that anything else merits removal.
+
+# 2. The IV, the CV, and the DV
+
+We do not have any information on the psychometric properties of any of the included items in the data set. As such, we have no theoretical basis to decide which items are and are not relevant to the constructs religiosity and well-being. As such, we decided to operationalize these concepts as self-reported religiosity and self-reported well-being. Furthermore, we make no assumptions as to whether the included items are necessary and sufficient.
+
+## The IV
+
+The item that in our opinion reflects self-reported religiosity best is item rel_3: "self-identification (1= religious, 2= not religious, 3=atheist)". We note that in the data set, item codes 1, 0.5, and 0 are used, respectively. We are not interested in the distinction between "not religious" (coded 0.5) and "atheist" (coded 0), so we lump these together for further analysis.
+
+```{r}
+IV = as.factor ((Data$rel_3==1)+0)  # 1 = religious, 0 = not religious
+```
+
+## The CV
+
+In order to answer the second research question, it is important to operationalize "how important people consider religion to be in their country". We have two items that potentially qualify:
+
+* cnorm_1: importance of religious lifestyle for average person in country (score range: {0, 0.25, 0.5, 0.75, 1})
+* cnorm_2: importance of belief in God/Gods for average person in country (score range: {0, 0.25, 0.5, 0.75, 1})
+
+We have no clear indication that one is more important than the other, so we average over both.
+
+```{r}
+# Scores {0, 0.125, 0.25, 0.375, 0.5, 0.625, 0.75, 0.875, 1}
+CV = (Data$cnorm_1+Data$cnorm_2)/2
+```
+
+## The DV
+
+The item that in our opinion reflects self-reported well-being best is item wb_gen_1: "quality of life general". The item uses a 1-5 response scale, with 1 indicating low well-being and 5 indicating high well-being.
+
+
+```{r}
+DV = Data$wb_gen_1
+
+AnData = data.frame (IV, DV, CV)
+write.csv (AnData, file = "AnDataReal.csv")
+```
+
+# 3. Descriptives
+
+Here are some descriptives:
+```{r echo=FALSE}
+ns = table (IV, CV)
+Means = SDs = matrix (, dim(ns)[1]+1, dim(ns)[2]+1)
+IVvals = 0:1
+CVvals = seq (0, 1, 1/8)
+for (i in 1:dim(ns)[1])
+{
+  for (j in 1:dim(ns)[2])
+  {
+    # Joint means and sds
+    Means[i,j] = mean (DV[IV==IVvals[i]&CV==CVvals[j]])
+    SDs[i,j] = sd (DV[IV==IVvals[i]&CV==CVvals[j]])
+  }
+  # Religion marginal means and sds
+  Means[i,dim(ns)[2]+1] = mean (DV[IV==IVvals[i]])
+  SDs[i,dim(ns)[2]+1] = sd (DV[IV==IVvals[i]])
+}
+
+for (j in 1:dim(ns)[2])
+{
+  # Cultural norm marginal means and sds
+  Means[dim(ns)[1]+1,j] = mean (DV[CV==CVvals[j]])
+  SDs[dim(ns)[1]+1,j] = sd (DV[CV==CVvals[j]])
+}
+
+# Grand mean and sd
+Means[dim(ns)[1]+1,dim(ns)[2]+1] = mean (DV)
+SDs[dim(ns)[1]+1,dim(ns)[2]+1] = sd (DV)
+Means = round (Means, 2); SDs = round (SDs, 2)
+
+# Ns per cell and in total
+ns = cbind (ns, apply (ns, 1, sum))
+ns = rbind (ns, apply (ns, 2, sum))
+dimnames (Means) = dimnames (SDs) = dimnames (ns) = list (c(IVvals, "marginal"), c(CVvals, "marginal"))
+```
+
+```{r echo=FALSE}
+knitr::kable(Means, caption = "Cell means and marginal means. Rows indicate self-reported religiosity (IV), and columns indicate importance of religion to country (CV).")
+knitr::kable(SDs, caption = "Cell SDs and marginal sds. Rows indicate self-reported religiosity (IV), and columns indicate importance of religion to country (CV).")
+knitr::kable(ns, caption = "Sample size per cell and across cells. Rows indicate self-reported religiosity (IV), and columns indicate importance of religion to country (CV).")
+```
+
+# 4. Analyses
+
+Our analysis of choice is a Bayesian ANCOVA with default priors (for documentation, see https://www.rdocumentation.org/packages/BayesFactor/versions/0.9.12-4.2/topics/lmBF). For the priors, we set the $r$ parameter of the inverse gamma prior on $\sqrt2/4$ for the continuous effect (i.e., the CV), which is regarded as a "medium" prior. We set the $r$ parameter of the inverse chi square prior on $0.5$ for the fixed effect (i.e., the IV), which is regarded as a "medium" prior. Both of these settings are consistent with the JASP recommendation. In order to verify robustness, we also include analyses for $r$ parameters of $\sqrt2/2$ and $1$ for continuous and fixed effects respectively, which are considered "ultrawide" priors. We test whether there is a main effect of the IV on the DV and whether there is evidence for the IV+CV model over the null model.
+
+<!-- This analysis is the one-sided t-test variant, don't think it needs to be included. -->
+<!-- Specifically, we calculate a Jeffreys-Zellner-Siow Bayes factor, which means we put a Cauchy prior of effect size $\delta$. The Cauchy prior is centered on zero with scale parameter $1/\sqrt2$. -->
+<!-- ```{r} -->
+<!-- BF10 = as.vector (ttestBF (x = DV[IV==0], y = DV[IV==1], nullInterval = c(-Inf, 0),  -->
+<!--                           rscale = 1/sqrt(2)))[1] -->
+<!-- ``` -->
+
+Conducting the analyses yields:
+```{r}
+MC = sqrt(2)/4
+MF = 0.5
+ModelIV = lmBF (DV~IV, data = AnData, rscaleCont = MC, rscaleFixed = MF)
+BFIV = round (exp (ModelIV@bayesFactor[1]), 3)
+ModelIVCV = lmBF (DV~IV+CV, data = AnData, rscaleCont = MC, rscaleFixed = MF)
+BFIVCV = round (exp (ModelIVCV@bayesFactor[1]), 3)
+```
+
+The first Bayes factor indicates the data is `r BFIV` times more likely under the IV model (the $\beta$ parameter for IV religion is non-zero) compared to the null model (the $\beta$ parameter for IV religion is zero). The Bayes factor indicates the data are overwhelmingly more likely under the IV model than under the null model. Based on this, the answer to the first research question is `yes'.
+
+The second Bayes factor indicates the data is `r BFIVCV` times more likely under the IV+CV model (the $\beta$ parameters for IV religion and CV cultural context are non-zero) compared to the null model (both $\beta$ parameters are zero). The Bayes factor indicates the data are overwhelmingly more likely under the IV+CV model than under the null model.
+
+Dividing the second Bayes factor by the first gives us the gain of the CV to the model: `r round (BFIVCV/BFIV, 3)`. This Bayes factor indicates the data are overwhelmingly more likely under the IV model than under the IV+CV model. Based on this, the answer to the second research question is `no'.
+
+Examination of the descriptives yields shows that religious people do report higher well-being (mean = 3.89, sd = 0.80) than non-religious people (mean = 3.74, sd = 0.86). The mean posterior estimate (with 95\% credible interval) of the $\beta$ parameter for IV religion under the IV model is 
+
+```{r}
+PostIV = lmBF (DV~IV, data = AnData, rscaleCont = MC, rscaleFixed = MF, posterior = TRUE, 
+               iterations = 1000)
+paste (round (mean (PostIV[,3] - PostIV[,2]), 3), " [", 
+       round (sort (PostIV[,3] - PostIV[,2])[26], 3), ", ", 
+       round (sort (PostIV[,3] - PostIV[,2])[975], 3), "]", sep = "")
+```
+
+No clear relationship is observed between the mean reported well-being scores and different levels of the covariate (see Table 1). The mean posterior estimate (with 95\% credible interval) of the $\beta$ parameter for CV cultural context under the IV+CV model is
+
+```{r}
+PostIVCV = lmBF (DV~IV+CV, data = AnData, rscaleCont = MC, rscaleFixed = MF, 
+                 posterior = TRUE, iterations = 1000)
+paste (round (mean (PostIVCV[,4]), 3), " [", 
+       round (sort (PostIVCV[,4])[26], 3), ", ", 
+       round (sort (PostIVCV[,4])[975], 3), "]", sep = "")
+```
+
+In order to verify the robustness of our results, we repeated the analyses with all combinations of one or both priors set to "ultrawide":
+```{r echo=FALSE}
+UC = sqrt(2)/2
+UF = 1
+ModelIVmu = lmBF (DV~IV, data = AnData, rscaleCont = UC, rscaleFixed = MF)
+BFIVmu = round (exp (ModelIVmu@bayesFactor[1]), 3)
+ModelIVCVmu = lmBF (DV~IV+CV, data = AnData, rscaleCont = UC, rscaleFixed = MF)
+BFIVCVmu = round (exp (ModelIVCVmu@bayesFactor[1]), 3)
+ModelIVum = lmBF (DV~IV, data = AnData, rscaleCont = MC, rscaleFixed = UF)
+BFIVum = round (exp (ModelIVum@bayesFactor[1]), 3)
+ModelIVCVum = lmBF (DV~IV+CV, data = AnData, rscaleCont = MC, rscaleFixed = UF)
+BFIVCVum = round (exp (ModelIVCVum@bayesFactor[1]), 3)
+ModelIVuu = lmBF (DV~IV, data = AnData, rscaleCont = UC, rscaleFixed = UF)
+BFIVuu = round (exp (ModelIVuu@bayesFactor[1]), 3)
+ModelIVCVuu = lmBF (DV~IV+CV, data = AnData, rscaleCont = UC, rscaleFixed = UF)
+BFIVCVuu = round (exp (ModelIVCVuu@bayesFactor[1]), 3)
+Robust = matrix (c(BFIVmu, BFIVCVmu, round (BFIVCVmu/BFIVmu, 3), 
+                   BFIVum, BFIVCVum, round (BFIVCVum/BFIVum, 3),
+                   BFIVuu, BFIVCVuu, round (BFIVCVuu/BFIVuu, 3)), 3, 3, 
+                 dimnames = list (c("IV/null", "IV+CV/null", "(IV+CV)/IV"), c("IVmCVu", "IVuCVm", "IVuCVu")))
+```
+
+which resulted in Bayes factors as displayed below:
+
+```{r echo=FALSE}
+knitr::kable(Robust, caption = "Robustness Bayes factors for the IV vs null, the IV+CV vs null, and the IV+CV vs IV models (rows) and one or two ultawide priors for the IV or CV (columns)")
+```
+
+The results of our analyses are robust to different values for the scale parameter of both priors (i.e., all Bayes factors in rows 1 and 2 are huge, all Bayes factors in row 3 are tiny).

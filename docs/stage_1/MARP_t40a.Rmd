@@ -3,8 +3,10 @@ title: "MARP Stage 1 Analysis Strategy"
 author: "Don van Ravenzwaaij"
 date: "December 2, 2020"
 output:
-  pdf_document: default
+  # pdf_document: default
   html_document: default
+editor_options: 
+  chunk_output_type: console
 ---
 
 MARP Stage 1 Analysis Strategy
@@ -24,11 +26,11 @@ library ("BayesFactor")
 ```
 
 ```{r echo=FALSE}
-setwd ("/Users/donvanravenzwaaij/Dropbox/Research/UHD2 RUG/MARP")
+# setwd ("/Users/donvanravenzwaaij/Dropbox/Research/UHD2 RUG/MARP")
 ```
 
 ```{r}
-PreData = read.csv ("MARP_data_blinded.csv")
+PreData = read.csv(here::here("data/MARP_data_blinded.csv"))
 ```
 
 # 1. Outlier removal
